@@ -43,6 +43,9 @@ type ImagePolicyChoice struct {
 	// available.
 	// +optional
 	SemVer *SemVerPolicy `json:"semver,omitempty"`
+	// Alphabetical set of rules to use for alphabetical ordering of the tags.
+	// +optional
+	Alphabetical *AlphabeticalPolicy `json:"alphabetical,omitempty"`
 }
 
 // SemVerPolicy specifices a semantic version policy.
@@ -51,6 +54,22 @@ type SemVerPolicy struct {
 	// version within the range that's a tag yields the latest image.
 	// +required
 	Range string `json:"range"`
+}
+
+// AlphabeticalPolicy specifices a alphabetical ordering policy.
+type AlphabeticalPolicy struct {
+	// Order specifies the sorting order of the tags. Given the letters of the
+	// alphabet as tags, ascending order would select Z, and descending order
+	// would select A.
+	// +kubebuilder:default:="asc"
+	// +kubebuilder:validation:Enum=asc;desc
+	// +optional
+	Order string `json:"order,omitempty"`
+	// MatchTagPrefix enables filtering for only a subset of tags based on their
+	// literal prefix. If not provided, all the tags from the repository will be
+	// ordered and compared.
+	// +optional
+	MatchTagPrefix string `json:"matchTagPrefix,omitempty"`
 }
 
 // ImagePolicyStatus defines the observed state of ImagePolicy

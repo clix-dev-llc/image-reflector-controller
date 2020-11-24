@@ -22,7 +22,6 @@ import (
 	"strings"
 	"time"
 
-	semver "github.com/Masterminds/semver/v3"
 	"github.com/go-logr/logr"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -36,9 +35,9 @@ import (
 
 	"github.com/fluxcd/pkg/runtime/events"
 	"github.com/fluxcd/pkg/runtime/metrics"
-	"github.com/fluxcd/pkg/version"
 
 	imagev1alpha1 "github.com/fluxcd/image-reflector-controller/api/v1alpha1"
+	"github.com/fluxcd/image-reflector-controller/internal/policy"
 )
 
 // this is used as the key for the index of policy->repository; the
@@ -103,12 +102,12 @@ func (r *ImagePolicyReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error)
 		return ctrl.Result{}, nil
 	}
 
-	policy := pol.Spec.Policy
+	policer, err := policy.PolicerFromSpec(pol.Spec.Policy)
+
 	var latest string
-	var err error
-	switch {
-	case policy.SemVer != nil:
-		latest, err = r.calculateLatestImageSemver(&policy, repo.Status.CanonicalImageName)
+	if policer != nil {
+		tags := r.Database.Tags(repo.Status.CanonicalImageName)
+		latest, err = policer.Latest(tags)
 	}
 	if err != nil {
 		r.event(pol, events.EventSeverityError, err.Error())
@@ -117,14 +116,14 @@ func (r *ImagePolicyReconciler) Reconcile(req ctrl.Request) (ctrl.Result, error)
 
 	if latest != "" {
 		pol.Status.LatestImage = repo.Spec.Image + ":" + latest
-		if err := r.Status().Update(ctx, &pol); err != nil {
+		if err = r.Status().Update(ctx, &pol); err != nil {
 			r.event(pol, events.EventSeverityError, err.Error())
-			return ctrl.Result{}, err
+		} else {
+			r.event(pol, events.EventSeverityInfo, fmt.Sprintf("Latest image tag for '%s' resolved to: %s", repo.Spec.Image, latest))
 		}
-		r.event(pol, events.EventSeverityInfo, fmt.Sprintf("Latest image tag for '%s' resolved to: %s", repo.Spec.Image, latest))
 	}
 
-	return ctrl.Result{}, nil
+	return ctrl.Result{}, err
 }
 
 func (r *ImagePolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
@@ -148,27 +147,6 @@ func (r *ImagePolicyReconciler) SetupWithManager(mgr ctrl.Manager) error {
 }
 
 // ---
-
-func (r *ImagePolicyReconciler) calculateLatestImageSemver(pol *imagev1alpha1.ImagePolicyChoice, canonImage string) (string, error) {
-	tags := r.Database.Tags(canonImage)
-	constraint, err := semver.NewConstraint(pol.SemVer.Range)
-	if err != nil {
-		// FIXME this'll get a stack trace in the log, but may not deserve it
-		return "", err
-	}
-	var latestVersion *semver.Version
-	for _, tag := range tags {
-		if v, err := version.ParseVersion(tag); err == nil {
-			if constraint.Check(v) && (latestVersion == nil || v.GreaterThan(latestVersion)) {
-				latestVersion = v
-			}
-		}
-	}
-	if latestVersion != nil {
-		return latestVersion.Original(), nil
-	}
-	return "", nil
-}
 
 func (r *ImagePolicyReconciler) imagePoliciesForRepository(obj handler.MapObject) []reconcile.Request {
 	ctx := context.Background()
